@@ -50,6 +50,9 @@ export class User {
   @Prop({ type: Date, default: null })
   lastSyncAt: Date | null;
 
+  @Prop({ type: Date, default: null })
+  lastReprocessAt: Date | null;
+
   @Prop({ enum: ['idle', 'syncing', 'error'], default: 'idle' })
   syncStatus: 'idle' | 'syncing' | 'error';
 

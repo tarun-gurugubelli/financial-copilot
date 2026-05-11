@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
   NotFoundException,
   Param,
   Post,
@@ -11,13 +12,19 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import type { Request } from 'express';
-import { IsEmail, IsIn, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { Model, Types } from 'mongoose';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { ImapService, IMAP_PROVIDERS } from './imap.service';
 import { CryptoService } from '../../common/crypto/crypto.service';
 import { User, UserDocument } from '../../database/schemas/user.schema';
+import { EmailRaw, EmailRawDocument } from '../../database/schemas/email-raw.schema';
+import { Transaction, TransactionDocument } from '../../database/schemas/transaction.schema';
+import { Card, CardDocument } from '../../database/schemas/card.schema';
+import { QUEUES, QUEUE_DEFAULT_JOB_OPTIONS } from '../../queues/queue.constants';
 
 // ─── DTOs ─────────────────────────────────────────────────────────────────────
 
@@ -29,8 +36,9 @@ class ConnectImapDto {
   @MinLength(4)
   appPassword: string;
 
+  @IsOptional()
   @IsIn(['yahoo', 'gmail', 'outlook'])
-  provider: 'yahoo' | 'gmail' | 'outlook';
+  provider?: 'yahoo' | 'gmail' | 'outlook';
 }
 
 // ─── Controller ───────────────────────────────────────────────────────────────
@@ -38,10 +46,16 @@ class ConnectImapDto {
 @Controller('imap')
 @UseGuards(JwtAuthGuard)
 export class ImapController {
+  private readonly logger = new Logger(ImapController.name);
+
   constructor(
     private readonly imapService: ImapService,
     private readonly crypto: CryptoService,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(EmailRaw.name) private readonly emailRawModel: Model<EmailRawDocument>,
+    @InjectModel(Transaction.name) private readonly transactionModel: Model<TransactionDocument>,
+    @InjectModel(Card.name) private readonly cardModel: Model<CardDocument>,
+    @InjectQueue(QUEUES.CLASSIFICATION) private readonly classificationQueue: Queue,
   ) {}
 
   /**
@@ -139,6 +153,35 @@ export class ImapController {
   }
 
   /**
+   * GET /api/imap/pipeline-status
+   *
+   * Returns the count of pending vs. completed email_raw documents for the
+   * calling user. Used by the frontend to track re-process pipeline progress
+   * without needing a WebSocket.
+   */
+  @Get('pipeline-status')
+  async pipelineStatus(@Req() req: Request) {
+    const { userId } = req.user as { userId: string };
+
+    // Match both string and ObjectId forms (Phase-1 legacy vs. current schema)
+    const userFilter = {
+      $or: [
+        { userId },
+        { userId: new Types.ObjectId(userId) },
+      ],
+    };
+
+    const [total, done] = await Promise.all([
+      this.emailRawModel.countDocuments(userFilter),
+      this.emailRawModel.countDocuments({
+        $and: [userFilter, { processed: true }],
+      }),
+    ]);
+
+    return { total, done, pending: total - done };
+  }
+
+  /**
    * POST /api/imap/sync
    * Manually trigger a sync for the authenticated user.
    */
@@ -153,10 +196,85 @@ export class ImapController {
 
     // Fire-and-forget — client polls syncStatus
     this.imapService.fetchEmailsForUser(userId).catch((err: Error) => {
-      // Log but don't crash — client will see syncStatus: 'error'
-      console.error(`Manual sync error for ${userId}: ${err.message}`);
+      this.logger.error(`Manual sync error for ${userId}: ${err.message}`);
     });
 
     return { message: 'Sync started', syncStatus: 'syncing' };
+  }
+
+  /**
+   * POST /api/imap/reprocess
+   *
+   * Hard-reset for the calling user:
+   *   1. Deletes all extracted transactions (Phase 1 garbage, wrong merchants / cards)
+   *   2. Deletes all auto-created cards
+   *   3. Resets every email_raw doc to processed=false so the AI pipeline can re-run
+   *   4. Re-enqueues every email for classification
+   *
+   * Safe to call multiple times — jobId deduplication prevents double-processing.
+   */
+  @Post('reprocess')
+  async reprocess(@Req() req: Request) {
+    const { userId } = req.user as { userId: string };
+
+    // Match both string userId (Phase-1 legacy) and ObjectId userId (new data)
+    // Phase 1 stored userId as a plain string; current schema uses ObjectId.
+    // Using $or ensures we catch all documents regardless of storage type.
+    const userFilter = {
+      $or: [
+        { userId: userId },
+        { userId: new Types.ObjectId(userId) },
+      ],
+    };
+
+    // 1. Wipe stale Phase-1 transactions
+    const { deletedCount: txDeleted } = await this.transactionModel.deleteMany(userFilter);
+
+    // 2. Wipe auto-created cards (unknown-bank placeholders)
+    const { deletedCount: cardDeleted } = await this.cardModel.deleteMany(userFilter);
+
+    // 3. Reset every email_raw so the pipeline treats them as fresh
+    await this.emailRawModel.updateMany(
+      userFilter,
+      { $set: { processed: false, status: 'pending', processedAt: null } },
+    );
+
+    // 4. Re-enqueue every stored email for AI classification
+    const emails = await this.emailRawModel
+      .find(userFilter)
+      .select('messageId')
+      .lean();
+
+    let queued = 0;
+    for (const email of emails) {
+      await this.classificationQueue.add(
+        'classify',
+        {
+          userId,
+          messageId: email.messageId as string,
+          jobId: email.messageId as string,
+          emailRawId: (email._id as Types.ObjectId).toString(),
+        },
+        {
+          ...QUEUE_DEFAULT_JOB_OPTIONS,
+          jobId: `classify-${email.messageId as string}`,
+        },
+      );
+      queued++;
+    }
+
+    // Stamp the time so the UI can show "Last reset at …"
+    const now = new Date();
+    await this.userModel.findByIdAndUpdate(userId, { lastReprocessAt: now });
+
+    this.logger.log(
+      `[reprocess] user=${userId} txDeleted=${txDeleted} cardsDeleted=${cardDeleted} emailsQueued=${queued}`,
+    );
+
+    return {
+      message: 'Reprocessing started. Transactions and cards will re-appear as emails are analysed.',
+      lastReprocessAt: now.toISOString(),
+      stats: { txDeleted, cardDeleted, emailsQueued: queued },
+    };
   }
 }
