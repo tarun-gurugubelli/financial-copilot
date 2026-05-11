@@ -13,7 +13,7 @@ import { QUEUES } from '../../queues/queue.constants';
       { name: User.name, schema: UserSchema },
       { name: EmailRaw.name, schema: EmailRawSchema },
     ]),
-    BullModule.registerQueue({ name: QUEUES.EMAIL_FETCH }),
+    BullModule.registerQueue({ name: QUEUES.CLASSIFICATION }),
   ],
   providers: [ImapService],
   controllers: [ImapController],

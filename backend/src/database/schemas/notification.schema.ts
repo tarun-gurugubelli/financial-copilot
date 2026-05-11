@@ -39,7 +39,7 @@ export class Notification {
   @Prop()
   relatedCollection: string;
 
-  @Prop({ default: null })
+  @Prop({ type: Date, default: null })
   readAt: Date | null;
 }
 

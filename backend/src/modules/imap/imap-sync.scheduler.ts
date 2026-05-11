@@ -13,8 +13,12 @@ export class ImapSyncScheduler {
   ) {}
 
   @Cron('*/5 * * * *')
-  async handleCron() {
-    this.logger.log('Dispatching IMAP sync jobs');
-    await this.imapService.dispatchSyncJobs();
+  async handleCron(): Promise<void> {
+    this.logger.log('IMAP sync cron fired');
+    try {
+      await this.imapService.syncAllUsers();
+    } catch (err) {
+      this.logger.error(`IMAP sync cron error: ${(err as Error).message}`);
+    }
   }
 }

@@ -21,18 +21,38 @@ export class UsersController {
   async getMe(@Req() req: Request) {
     const { userId } = req.user as { userId: string };
     const user = await this.userModel.findById(userId).select('-passwordHash');
+    if (!user) return null;
+
+    const obj = user.toObject() as unknown as Record<string, unknown>;
+
+    // Strip encrypted credential fields — expose only safe metadata
+    const safeAccounts = (user.imapAccounts ?? []).map((a) => ({
+      email: a.email,
+      provider: a.provider,
+      lastSyncAt: a.lastSyncAt,
+    }));
+
     return {
-      ...user?.toObject(),
-      hasImapCredentials: !!user?.imapCredentials,
-      imapCredentials: undefined,
+      ...obj,
+      imapAccounts: safeAccounts,
+      connectedAccounts: safeAccounts.length,
     };
   }
 
   @Put('me')
   async updateMe(@Body() dto: UpdateProfileDto, @Req() req: Request) {
     const { userId } = req.user as { userId: string };
-    return this.userModel
+    const user = await this.userModel
       .findByIdAndUpdate(userId, dto, { new: true })
       .select('-passwordHash');
+    if (!user) return null;
+
+    const safeAccounts = (user.imapAccounts ?? []).map((a) => ({
+      email: a.email,
+      provider: a.provider,
+      lastSyncAt: a.lastSyncAt,
+    }));
+
+    return { ...(user.toObject() as unknown as Record<string, unknown>), imapAccounts: safeAccounts, connectedAccounts: safeAccounts.length };
   }
 }

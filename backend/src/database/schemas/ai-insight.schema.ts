@@ -48,8 +48,8 @@ export class AiInsight {
   })
   topCategories: { category: string; amount: number }[];
 
-  @Prop({ default: null })
-  generatedAt: Date;
+  @Prop({ type: Date, default: null })
+  generatedAt: Date | null;
 
   @Prop({ default: 0 })
   openaiTokensUsed: number;

@@ -3,6 +3,18 @@ import { Document } from 'mongoose';
 
 export type UserDocument = User & Document;
 
+/** Stored credentials for one connected email inbox */
+export interface ImapAccount {
+  email: string;
+  provider: 'yahoo' | 'gmail' | 'outlook';
+  host: string;
+  /** AES-GCM encrypted app-password fields */
+  iv: string;
+  authTag: string;
+  ciphertext: string;
+  lastSyncAt: Date | null;
+}
+
 @Schema({ timestamps: true })
 export class User {
   @Prop({ required: true, trim: true })
@@ -14,23 +26,28 @@ export class User {
   @Prop({ required: true, select: false })
   passwordHash: string;
 
+  /**
+   * One entry per connected email account.
+   * Replaces the old scalar `imapCredentials` field.
+   */
   @Prop({
-    type: {
-      email: String,
-      iv: String,
-      authTag: String,
-      ciphertext: String,
-    },
-    default: null,
+    type: [
+      {
+        _id: false,
+        email: { type: String, required: true },
+        provider: { type: String, enum: ['yahoo', 'gmail', 'outlook'], required: true },
+        host: { type: String, required: true },
+        iv: { type: String, required: true },
+        authTag: { type: String, required: true },
+        ciphertext: { type: String, required: true },
+        lastSyncAt: { type: Date, default: null },
+      },
+    ],
+    default: [],
   })
-  imapCredentials: {
-    email: string;
-    iv: string;
-    authTag: string;
-    ciphertext: string;
-  } | null;
+  imapAccounts: ImapAccount[];
 
-  @Prop({ default: null })
+  @Prop({ type: Date, default: null })
   lastSyncAt: Date | null;
 
   @Prop({ enum: ['idle', 'syncing', 'error'], default: 'idle' })
@@ -41,4 +58,3 @@ export class User {
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
-UserSchema.index({ email: 1 }, { unique: true });

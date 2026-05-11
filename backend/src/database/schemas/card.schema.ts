@@ -29,7 +29,7 @@ export class Card {
   @Prop({ min: 1, max: 31 })
   billingCycleDay: number;
 
-  @Prop({ default: null })
+  @Prop({ type: Date, default: null })
   dueDate: Date | null;
 
   @Prop({ default: true })

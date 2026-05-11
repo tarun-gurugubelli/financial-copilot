@@ -30,6 +30,7 @@ export class EmailRaw {
   bodyHash: string;
 
   @Prop({
+    type: String,
     enum: ['transaction', 'otp', 'statement', 'reward', 'spam'],
     default: null,
   })
@@ -44,7 +45,7 @@ export class EmailRaw {
   @Prop({ default: false })
   processed: boolean;
 
-  @Prop({ default: null })
+  @Prop({ type: Date, default: null })
   processedAt: Date | null;
 }
 

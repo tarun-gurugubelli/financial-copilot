@@ -4,7 +4,9 @@ export interface ExtractionResult {
   amount: number;
   currency: string;
   merchant: string;
-  card_last4: string;
+  bankName?: string;
+  transactionType?: 'UPI' | 'POS' | 'Online' | 'ATM' | null;
+  card_last4: string | null;
   timestamp: Date;
   location?: string;
   isEmi: boolean;

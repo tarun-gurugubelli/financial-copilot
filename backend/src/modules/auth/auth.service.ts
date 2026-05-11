@@ -98,7 +98,7 @@ export class AuthService {
         id: user._id,
         name: user.name,
         email: user.email,
-        hasImapCredentials: !!user.imapCredentials,
+        connectedAccounts: user.imapAccounts?.length ?? 0,
         syncStatus: user.syncStatus,
       },
     };
