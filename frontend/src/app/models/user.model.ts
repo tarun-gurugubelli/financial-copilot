@@ -1,9 +1,18 @@
+export interface ImapAccount {
+  email: string;
+  provider: 'yahoo' | 'gmail' | 'outlook';
+  lastSyncAt: string | null;
+}
+
 export interface User {
   id: string;
   name: string;
   email: string;
-  hasImapCredentials: boolean;
+  /** Number of connected email accounts */
+  connectedAccounts: number;
+  imapAccounts: ImapAccount[];
   syncStatus: 'idle' | 'syncing' | 'error';
+  lastSyncAt: string | null;
 }
 
 export interface AuthResponse {

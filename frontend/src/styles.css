@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@source "./src/app/**/*.ts";
+@source "./src/index.html";
 
 @theme {
   /* Dark FinTech palette */

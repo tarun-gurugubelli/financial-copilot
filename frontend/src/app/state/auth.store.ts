@@ -25,7 +25,7 @@ export const AuthStore = signalStore(
         try {
           const res = await api.login({ email, password }).toPromise();
           patchState(store, { user: res!.user, loading: false });
-          if (!res!.user.hasImapCredentials) {
+          if (!res!.user.connectedAccounts) {
             router.navigate(['/onboarding']);
           } else {
             router.navigate(['/dashboard']);

@@ -1,9 +1,49 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, inject, signal, computed } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { ApiService } from '../../services/api.service';
 
 type Step = 'welcome' | 'credentials' | 'syncing';
+
+interface Provider {
+  id: 'yahoo' | 'gmail' | 'outlook';
+  label: string;
+  icon: string;
+  placeholder: string;
+  helpUrl: string;
+  helpLabel: string;
+  note: string;
+}
+
+const PROVIDERS: Provider[] = [
+  {
+    id: 'yahoo',
+    label: 'Yahoo Mail',
+    icon: '📨',
+    placeholder: 'yourname@yahoo.com',
+    helpUrl: 'https://login.yahoo.com/account/security',
+    helpLabel: 'Generate Yahoo App Password',
+    note: 'Requires 2-step verification enabled on your Yahoo account.',
+  },
+  {
+    id: 'gmail',
+    label: 'Gmail',
+    icon: '✉️',
+    placeholder: 'yourname@gmail.com',
+    helpUrl: 'https://myaccount.google.com/apppasswords',
+    helpLabel: 'Generate Gmail App Password',
+    note: 'Requires 2-step verification enabled and IMAP enabled in Gmail settings.',
+  },
+  {
+    id: 'outlook',
+    label: 'Outlook',
+    icon: '📧',
+    placeholder: 'yourname@outlook.com',
+    helpUrl: 'https://account.microsoft.com/security',
+    helpLabel: 'Set up Outlook App Password',
+    note: 'Requires 2-step verification enabled on your Microsoft account.',
+  },
+];
 
 @Component({
   selector: 'app-onboarding',
@@ -30,8 +70,9 @@ type Step = 'welcome' | 'credentials' | 'syncing';
               <div class="text-4xl">📬</div>
               <h2 class="text-xl font-semibold" style="color: var(--color-text)">Welcome to Financial Copilot</h2>
               <p class="text-sm leading-relaxed" style="color: var(--color-muted)">
-                We'll connect to your Yahoo Mail and automatically detect credit card transaction emails.
-                No emails are stored — only the extracted transaction data.
+                Connect your email account and we'll automatically detect Indian bank transaction
+                emails — HDFC, Axis, ICICI, IDFC, Yes Bank and more. Only transaction data is
+                extracted; raw emails stay private.
               </p>
               <button (click)="step.set('credentials')"
                 class="w-full rounded-lg py-2.5 text-sm font-semibold mt-4"
@@ -41,32 +82,56 @@ type Step = 'welcome' | 'credentials' | 'syncing';
             </div>
           }
 
-          <!-- Step 2: Yahoo credentials -->
+          <!-- Step 2: Provider + credentials -->
           @if (step() === 'credentials') {
             <div class="space-y-5">
               <div>
-                <h2 class="text-lg font-semibold" style="color: var(--color-text)">Connect Yahoo Mail</h2>
+                <h2 class="text-lg font-semibold" style="color: var(--color-text)">Connect your email</h2>
                 <p class="text-sm mt-1" style="color: var(--color-muted)">
-                  You need a Yahoo App Password.
-                  <a href="https://login.yahoo.com/account/security" target="_blank" rel="noopener"
-                    class="underline" style="color: var(--color-primary)">Generate one here</a>
-                  (requires 2FA enabled on Yahoo).
+                  Choose your email provider and enter an App Password.
                 </p>
               </div>
 
               @if (error()) {
-                <div class="rounded-lg px-4 py-3 text-sm" style="background-color: rgba(239,68,68,0.1); color: var(--color-danger); border: 1px solid var(--color-danger)">
+                <div class="rounded-lg px-4 py-3 text-sm"
+                  style="background-color: rgba(239,68,68,0.1); color: var(--color-danger); border: 1px solid var(--color-danger)">
                   {{ error() }}
+                </div>
+              }
+
+              <!-- Provider selector -->
+              <div class="grid grid-cols-3 gap-2">
+                @for (p of providers; track p.id) {
+                  <button type="button" (click)="selectedProvider.set(p.id)"
+                    class="rounded-lg py-3 px-2 text-xs font-medium flex flex-col items-center gap-1 transition-all border"
+                    [style.border-color]="selectedProvider() === p.id ? 'var(--color-primary)' : 'var(--color-border)'"
+                    [style.background-color]="selectedProvider() === p.id ? 'rgba(99,102,241,0.1)' : 'var(--color-bg)'"
+                    [style.color]="selectedProvider() === p.id ? 'var(--color-primary)' : 'var(--color-muted)'">
+                    <span class="text-xl">{{ p.icon }}</span>
+                    {{ p.label }}
+                  </button>
+                }
+              </div>
+
+              <!-- Provider-specific help -->
+              @if (currentProvider()) {
+                <div class="rounded-lg px-4 py-3 text-xs leading-relaxed"
+                  style="background-color: var(--color-bg); border: 1px solid var(--color-border); color: var(--color-muted)">
+                  {{ currentProvider()!.note }}
+                  <a [href]="currentProvider()!.helpUrl" target="_blank" rel="noopener"
+                    class="block mt-1 underline" style="color: var(--color-primary)">
+                    {{ currentProvider()!.helpLabel }} →
+                  </a>
                 </div>
               }
 
               <form [formGroup]="form" (ngSubmit)="connect()" class="space-y-4">
                 <div>
-                  <label class="block text-sm font-medium mb-1.5" style="color: var(--color-muted)">Yahoo Email</label>
+                  <label class="block text-sm font-medium mb-1.5" style="color: var(--color-muted)">Email address</label>
                   <input formControlName="email" type="email"
                     class="w-full rounded-lg px-3.5 py-2.5 text-sm outline-none"
                     style="background-color: var(--color-bg); border: 1px solid var(--color-border); color: var(--color-text)"
-                    placeholder="yourname@yahoo.com">
+                    [placeholder]="currentProvider()?.placeholder ?? 'yourname@example.com'">
                 </div>
                 <div>
                   <label class="block text-sm font-medium mb-1.5" style="color: var(--color-muted)">App Password</label>
@@ -91,14 +156,15 @@ type Step = 'welcome' | 'credentials' | 'syncing';
                 <div class="h-10 w-10 rounded-full border-2 border-t-transparent animate-spin"
                   style="border-color: var(--color-primary); border-top-color: transparent"></div>
               </div>
-              <h2 class="text-xl font-semibold" style="color: var(--color-text)">Syncing your emails…</h2>
+              <h2 class="text-xl font-semibold" style="color: var(--color-text)">Scanning your inbox…</h2>
               <p class="text-sm" style="color: var(--color-muted)">
-                This may take a minute. We'll redirect you when the first transaction is ready.
+                We're fetching your last 90 days of bank transaction emails.
+                This may take a minute — you can go to the dashboard now.
               </p>
               <button (click)="goToDashboard()"
                 class="text-sm underline"
                 style="color: var(--color-muted)">
-                Skip and go to dashboard
+                Go to dashboard
               </button>
             </div>
           }
@@ -113,12 +179,17 @@ export class OnboardingComponent {
   private readonly router = inject(Router);
   private readonly fb = inject(FormBuilder);
 
+  readonly providers = PROVIDERS;
   readonly steps = ['welcome', 'credentials', 'syncing'];
   readonly step = signal<Step>('welcome');
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
+  readonly selectedProvider = signal<'yahoo' | 'gmail' | 'outlook'>('yahoo');
 
   readonly currentStepIndex = () => this.steps.indexOf(this.step());
+  readonly currentProvider = computed(() =>
+    PROVIDERS.find((p) => p.id === this.selectedProvider()),
+  );
 
   readonly form = this.fb.nonNullable.group({
     email: ['', [Validators.required, Validators.email]],
@@ -130,14 +201,15 @@ export class OnboardingComponent {
     this.loading.set(true);
     this.error.set(null);
     const { email, appPassword } = this.form.getRawValue();
+    const provider = this.selectedProvider();
     try {
-      await this.api.connectImap({ email, appPassword }).toPromise();
+      await this.api.connectImap({ email, appPassword, provider }).toPromise();
       this.step.set('syncing');
-      // Redirect to dashboard after 5s if no WebSocket event arrives
       setTimeout(() => this.goToDashboard(), 5000);
     } catch (err: unknown) {
-      const msg = (err as { error?: { message?: string } })?.error?.message
-        ?? 'Could not connect. Check your Yahoo email and App Password.';
+      const msg =
+        (err as { error?: { message?: string } })?.error?.message ??
+        `Could not connect to ${this.currentProvider()?.label ?? 'your email'}. Check the email and App Password.`;
       this.error.set(msg);
     } finally {
       this.loading.set(false);
