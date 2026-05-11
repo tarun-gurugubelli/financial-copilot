@@ -34,6 +34,9 @@ export class ApiService {
   updateMe(body: Partial<Pick<User, 'name'>>) {
     return this.http.put<User>(`${this.base}/users/me`, body, { withCredentials: true });
   }
+  deleteAccount() {
+    return this.http.delete<{ message: string }>(`${this.base}/users/me`, { withCredentials: true });
+  }
 
   // ── IMAP accounts ─────────────────────────────────────────────────────────
 
@@ -58,11 +61,27 @@ export class ApiService {
     );
   }
 
+  /** Poll the AI pipeline progress for the current user */
+  getPipelineStatus() {
+    return this.http.get<{ total: number; done: number; pending: number }>(
+      `${this.base}/imap/pipeline-status`, { withCredentials: true },
+    );
+  }
+
   /** Trigger a manual sync for all connected accounts */
   syncImap() {
     return this.http.post<{ message: string; syncStatus: string }>(
       `${this.base}/imap/sync`, {}, { withCredentials: true },
     );
+  }
+
+  /** Delete all Phase-1 data and re-run the AI pipeline on every stored email */
+  reprocessEmails() {
+    return this.http.post<{
+      message: string;
+      lastReprocessAt: string;
+      stats: { txDeleted: number; cardDeleted: number; emailsQueued: number };
+    }>(`${this.base}/imap/reprocess`, {}, { withCredentials: true });
   }
 
   // ── Transactions ──────────────────────────────────────────────────────────

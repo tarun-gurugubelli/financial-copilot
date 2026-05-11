@@ -23,6 +23,15 @@ import { Transaction } from '../../models/transaction.model';
           style="background-color: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text)">
       </div>
 
+      <!-- API error -->
+      @if (apiError()) {
+        <div class="rounded-lg px-4 py-3 text-sm"
+          style="background-color: rgba(239,68,68,0.1); color: var(--color-danger); border: 1px solid var(--color-danger)">
+          <strong>Could not load transactions:</strong> {{ apiError() }}
+          <button (click)="load()" class="ml-3 underline text-xs">Retry</button>
+        </div>
+      }
+
       <!-- Table -->
       <div class="rounded-xl border overflow-hidden" style="background-color: var(--color-surface); border-color: var(--color-border)">
         <table class="w-full text-sm">
@@ -36,13 +45,22 @@ import { Transaction } from '../../models/transaction.model';
           </thead>
           <tbody>
             @if (loading()) {
-              <tr><td [attr.colspan]="columns.length" class="text-center py-12" style="color: var(--color-muted)">Loading…</td></tr>
+              <tr>
+                <td [attr.colspan]="columns.length" class="text-center py-12" style="color: var(--color-muted)">
+                  Loading…
+                </td>
+              </tr>
             } @else if (transactions().length === 0) {
               <tr>
                 <td [attr.colspan]="columns.length">
                   <div class="flex flex-col items-center py-16 gap-3">
                     <span class="text-4xl">📭</span>
-                    <p style="color: var(--color-muted)">No transactions found.</p>
+                    <p class="font-medium" style="color: var(--color-text)">No transactions yet</p>
+                    <p class="text-sm text-center max-w-sm" style="color: var(--color-muted)">
+                      Transactions appear here after the AI pipeline processes your bank emails.
+                      Go to <strong>Settings → Reset &amp; Re-process</strong> to kick off extraction,
+                      or wait for the next automatic sync.
+                    </p>
                   </div>
                 </td>
               </tr>
@@ -91,6 +109,7 @@ export class TransactionsComponent implements OnInit {
   readonly loading = signal(true);
   readonly total = signal(0);
   readonly page = signal(1);
+  readonly apiError = signal<string | null>(null);
   readonly pageSize = 20;
   search = '';
 
@@ -98,15 +117,28 @@ export class TransactionsComponent implements OnInit {
 
   load() {
     this.loading.set(true);
-    this.api.getTransactions({ page: this.page(), limit: this.pageSize, search: this.search || undefined }).subscribe({
-      next: res => { this.transactions.set(res.data); this.total.set(res.total); this.loading.set(false); },
-      error: () => this.loading.set(false),
+    this.apiError.set(null);
+    this.api.getTransactions({
+      page: this.page(),
+      limit: this.pageSize,
+      ...(this.search ? { search: this.search } : {}),
+    }).subscribe({
+      next: res => {
+        this.transactions.set(res.data);
+        this.total.set(res.total);
+        this.loading.set(false);
+      },
+      error: (err: { status?: number; message?: string; error?: { message?: string } }) => {
+        const msg = err?.error?.message ?? err?.message ?? `HTTP ${err?.status ?? 'error'}`;
+        this.apiError.set(msg);
+        this.loading.set(false);
+      },
     });
   }
 
   cardLabel(tx: Transaction): string {
     if (!tx.cardId) return '—';
-    if (typeof tx.cardId === 'object') return `•••• ${tx.cardId.last4}`;
+    if (typeof tx.cardId === 'object') return `${tx.cardId.bankName} ••${tx.cardId.last4}`;
     return '—';
   }
 

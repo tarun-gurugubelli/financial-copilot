@@ -13,6 +13,7 @@ export interface User {
   imapAccounts: ImapAccount[];
   syncStatus: 'idle' | 'syncing' | 'error';
   lastSyncAt: string | null;
+  lastReprocessAt: string | null;
 }
 
 export interface AuthResponse {
