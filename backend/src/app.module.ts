@@ -23,6 +23,7 @@ import { TransactionsModule } from './modules/transactions/transactions.module';
 import { ImapModule } from './modules/imap/imap.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { InsightsModule } from './modules/insights/insights.module';
+import { HealthModule } from './modules/health/health.module';
 
 // Schedulers
 import { ImapSyncScheduler } from './modules/imap/imap-sync.scheduler';
@@ -67,6 +68,7 @@ import { User, UserSchema } from './database/schemas/user.schema';
     GatewayModule,
 
     // Domain modules
+    HealthModule,
     AuthModule,
     UsersModule,
     CardsModule,

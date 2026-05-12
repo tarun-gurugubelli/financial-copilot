@@ -1,5 +1,6 @@
 export const environment = {
   production: true,
-  apiUrl: '/api',
-  wsUrl: '',  // Same origin in production (proxied by nginx)
+  // Replace YOUR_APP with your actual Render service name after deploying
+  apiUrl: 'https://YOUR_APP.onrender.com/api',
+  wsUrl: 'https://YOUR_APP.onrender.com',
 };

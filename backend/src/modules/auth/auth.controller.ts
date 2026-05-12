@@ -14,10 +14,14 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
+const IS_PROD = process.env.NODE_ENV === 'production';
+
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict' as const,
+  secure: IS_PROD,
+  // SameSite=none required for cross-origin (GitHub Pages → Railway).
+  // SameSite=none mandates Secure=true, so it only applies in production.
+  sameSite: (IS_PROD ? 'none' : 'strict') as 'none' | 'strict',
   path: '/',
 };
 
