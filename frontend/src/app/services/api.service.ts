@@ -68,10 +68,10 @@ export class ApiService {
     );
   }
 
-  /** Trigger a manual sync for all connected accounts */
-  syncImap() {
+  /** Trigger a manual sync. Pass `from` (ISO date string) to fetch emails from a specific date. */
+  syncImap(from?: string) {
     return this.http.post<{ message: string; syncStatus: string }>(
-      `${this.base}/imap/sync`, {}, { withCredentials: true },
+      `${this.base}/imap/sync`, from ? { from } : {}, { withCredentials: true },
     );
   }
 
@@ -86,9 +86,19 @@ export class ApiService {
 
   // ── Transactions ──────────────────────────────────────────────────────────
 
-  getTransactions(params: { page?: number; limit?: number; category?: string; search?: string } = {}) {
+  getTransactions(params: {
+    page?: number; limit?: number; category?: string; search?: string;
+    from?: string; to?: string;
+  } = {}) {
+    const p: Record<string, string | number> = {};
+    if (params.page)     p['page']     = params.page;
+    if (params.limit)    p['limit']    = params.limit;
+    if (params.category) p['category'] = params.category;
+    if (params.search)   p['search']   = params.search;
+    if (params.from)     p['from']     = params.from;
+    if (params.to)       p['to']       = params.to;
     return this.http.get<TransactionPage>(`${this.base}/transactions`, {
-      params: params as Record<string, string | number>,
+      params: p,
       withCredentials: true,
     });
   }

@@ -36,7 +36,7 @@ import { Card } from '../../models/card.model';
                 <span class="text-2xl">💳</span>
               </div>
               <div class="border-t pt-3" style="border-color: var(--color-border)">
-                <p class="text-xs" style="color: var(--color-muted)">Current Balance</p>
+                <p class="text-xs" style="color: var(--color-muted)">Total Spent</p>
                 <p class="text-lg font-bold mt-0.5" style="color: var(--color-danger)">
                   ₹{{ card.currentBalance.toLocaleString() }}
                 </p>
