@@ -184,9 +184,10 @@ export class ImapController {
   /**
    * POST /api/imap/sync
    * Manually trigger a sync for the authenticated user.
+   * Optional body: { from: "YYYY-MM-DD" } to fetch emails from a specific date.
    */
   @Post('sync')
-  async sync(@Req() req: Request) {
+  async sync(@Req() req: Request, @Body() body: { from?: string }) {
     const { userId } = req.user as { userId: string };
 
     const user = await this.userModel.findById(userId).select('imapAccounts');
@@ -194,8 +195,10 @@ export class ImapController {
       throw new BadRequestException('No email accounts connected. Add an account first.');
     }
 
+    const sinceOverride = body?.from ? new Date(body.from) : undefined;
+
     // Fire-and-forget — client polls syncStatus
-    this.imapService.fetchEmailsForUser(userId).catch((err: Error) => {
+    this.imapService.fetchEmailsForUser(userId, sinceOverride).catch((err: Error) => {
       this.logger.error(`Manual sync error for ${userId}: ${err.message}`);
     });
 
@@ -245,19 +248,25 @@ export class ImapController {
       .select('messageId')
       .lean();
 
+    // Use a runId so every job in the whole pipeline chain gets a unique BullMQ
+    // jobId, bypassing duplicate suppression from previously-completed jobs.
+    const runId = Date.now();
+
     let queued = 0;
     for (const email of emails) {
+      const msgId = email.messageId as string;
       await this.classificationQueue.add(
         'classify',
         {
           userId,
-          messageId: email.messageId as string,
-          jobId: email.messageId as string,
+          messageId: msgId,
+          jobId: msgId,
           emailRawId: (email._id as Types.ObjectId).toString(),
+          runId,
         },
         {
           ...QUEUE_DEFAULT_JOB_OPTIONS,
-          jobId: `classify-${email.messageId as string}`,
+          jobId: `classify-${msgId}-r${runId}`,
         },
       );
       queued++;

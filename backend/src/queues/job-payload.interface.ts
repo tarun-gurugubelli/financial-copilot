@@ -34,4 +34,7 @@ export interface JobPayload {
   extractionResult?: ExtractionResult;
   categorizationResult?: CategorizationResult;
   fraudResult?: FraudResult;
+  /** Set by the reprocess endpoint so every job in the chain gets a unique ID,
+   *  bypassing BullMQ's duplicate-suppression for previously-completed jobs. */
+  runId?: number;
 }

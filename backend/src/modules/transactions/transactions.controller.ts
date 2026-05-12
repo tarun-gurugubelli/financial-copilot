@@ -21,6 +21,8 @@ export class TransactionsController {
     @Query('category') category?: string,
     @Query('cardId') cardId?: string,
     @Query('search') search?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
     const { userId } = req.user as { userId: string };
     const filter: Record<string, unknown> = { userId };
@@ -28,6 +30,17 @@ export class TransactionsController {
     if (category) filter['category'] = category;
     if (cardId) filter['cardId'] = new Types.ObjectId(cardId);
     if (search) filter['merchant'] = { $regex: search, $options: 'i' };
+
+    if (from || to) {
+      const range: Record<string, Date> = {};
+      if (from) range['$gte'] = new Date(from);
+      if (to) {
+        const toDate = new Date(to);
+        toDate.setHours(23, 59, 59, 999);
+        range['$lte'] = toDate;
+      }
+      filter['timestamp'] = range;
+    }
 
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([

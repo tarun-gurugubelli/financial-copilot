@@ -81,10 +81,12 @@ export class CategorizationWorker extends WorkerHost {
 
     const categorizationResult: CategorizationResult = { category, subcategory };
 
+    const runId = job.data.runId;
+    const fraudJobId = runId ? `fraud-${messageId}-r${runId}` : `fraud-${messageId}`;
     await this.fraudQueue.add(
       'fraud-check',
       { ...job.data, categorizationResult } satisfies JobPayload,
-      { ...QUEUE_DEFAULT_JOB_OPTIONS, jobId: `fraud-${messageId}` },
+      { ...QUEUE_DEFAULT_JOB_OPTIONS, jobId: fraudJobId },
     );
 
     this.logger.debug(`[${messageId}] categorized → ${category} / ${subcategory}`);

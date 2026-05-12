@@ -14,6 +14,22 @@ import { sanitizeForPrompt } from '../common/utils/sanitize';
 
 const CONFIDENCE_THRESHOLD = 0.7;
 
+/** Strip HTML to readable plain text for emails that have no text part. */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 const SYSTEM_PROMPT = `You are a financial transaction extractor specializing in Indian banking emails.
 Extract the transaction details and return valid JSON matching this schema exactly:
 {
@@ -32,16 +48,25 @@ Extract the transaction details and return valid JSON matching this schema exact
 
 Common Indian bank email formats you will see:
 
-HDFC Bank:
+HDFC Bank (Credit Card):
   "INR 1,234.00 has been spent on your HDFC Bank Credit Card XX1234 at MERCHANT on DD/MM/YY."
   "INR 1,234.00 spent on Credit Card ending 1234. Merchant: MERCHANT."
+
+HDFC Bank (RuPay Credit Card):
+  "Rs.1,234.00 is debited from your HDFC Bank RuPay Credit Card ending 1234 on MM/DD/YYYY at MERCHANT."
+  "Rs.1,234.00 is debited from your HDFC Bank RuPay Credit Card ending 1234. Available limit: Rs.45,000."
+
+HDFC Bank (UPI InstaAlert):
+  "You have done a UPI txn. Check details!\nAmount: Rs.1,234.00 | To: MERCHANT | From A/c: XXXX1234"
 
 Axis Bank:
   "Your Axis Bank Credit Card XX1234 has been used for Rs.1,234.00 at MERCHANT on DD MMM YYYY."
   "Rs.1,234.00 has been debited from your Axis Bank A/c ending 1234 via UPI."
+  "INR 1,234 spent on credit card no. XX1234. Merchant: MERCHANT."
 
 ICICI Bank:
   "Your ICICI Bank Credit Card XX1234 has been used for a transaction of Rs 1,234.00 at MERCHANT."
+  "Rs.1,234.00 has been debited from your ICICI Bank account ending 1234."
 
 IDFC First Bank:
   "Rs 1,234 has been debited from your IDFC FIRST Bank Account ending 1234 on DD-MM-YYYY."
@@ -52,9 +77,11 @@ Yes Bank:
 Kotak Bank:
   "A transaction of Rs.1,234.00 has been made on your Kotak Credit Card ending 1234 at MERCHANT."
 
-UPI transactions:
+IndusInd Bank:
+  "INR 1,234.00 has been debited from your IndusInd Bank Credit Card ending 1234 at MERCHANT."
+
+UPI transactions (generic):
   "You have done a UPI txn. Amount: Rs.1,234.00 | To: MERCHANT | From a/c: XX1234 | UPI Ref: 123456789"
-  "INR 1,234.00 spent on credit card no. XX1234. Merchant: MERCHANT."
 
 Rules:
 - amount: positive number, strip ₹ and commas (e.g. 1,234.56 → 1234.56)
@@ -89,7 +116,9 @@ export class ExtractionWorker extends WorkerHost {
     if (!emailRaw) return;
 
     const subject = sanitizeForPrompt(emailRaw.subject ?? '', 200);
-    const body = sanitizeForPrompt(emailRaw.bodyText ?? '', 4000);
+    // Fall back to stripping HTML when the plain-text part is absent (e.g. HDFC InstaAlerts)
+    const rawBody = (emailRaw.bodyText ?? '').trim() || htmlToText(emailRaw.bodyHtml ?? '');
+    const body = sanitizeForPrompt(rawBody, 4000);
 
     let extraction: ExtractionResult | null = null;
     let totalTokens = 0;
@@ -142,6 +171,8 @@ export class ExtractionWorker extends WorkerHost {
       this.logger.error(`Extraction error for ${messageId}: ${(err as Error).message}`);
     }
 
+    const runId = job.data.runId;
+
     // ── Confidence gate ────────────────────────────────────────────────────────
     if (!extraction || extraction.confidence < CONFIDENCE_THRESHOLD) {
       await this.emailRawModel.findByIdAndUpdate(emailRaw._id, {
@@ -150,10 +181,11 @@ export class ExtractionWorker extends WorkerHost {
         processedAt: new Date(),
       });
 
+      const notifyFailJobId = runId ? `notify-fail-${messageId}-r${runId}` : `notify-fail-${messageId}`;
       await this.notificationQueue.add(
         'notify',
         { ...job.data, emailRawId: (emailRaw._id as Types.ObjectId).toString() } satisfies JobPayload,
-        { ...QUEUE_DEFAULT_JOB_OPTIONS, jobId: `notify-fail-${messageId}` },
+        { ...QUEUE_DEFAULT_JOB_OPTIONS, jobId: notifyFailJobId },
       );
 
       this.logger.warn(
@@ -224,9 +256,10 @@ export class ExtractionWorker extends WorkerHost {
       extractionResult: extraction,
     };
 
+    const categorizeJobId = runId ? `categorize-${messageId}-r${runId}` : `categorize-${messageId}`;
     await this.categorizationQueue.add('categorize', payload, {
       ...QUEUE_DEFAULT_JOB_OPTIONS,
-      jobId: `categorize-${messageId}`,
+      jobId: categorizeJobId,
     });
 
     this.logger.log(

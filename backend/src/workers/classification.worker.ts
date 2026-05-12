@@ -17,11 +17,17 @@ const SYSTEM_PROMPT = `You are an email classifier for an Indian banking assista
 Classify the email into exactly one type and return JSON only.
 
 Types:
-- transaction: credit/debit card charge, UPI payment, bank transfer, purchase confirmation, merchant debit alert
-- otp: one-time password, verification code, login OTP
-- statement: monthly statement, account summary, passbook update
-- reward: reward points earned, cashback credited, offers
-- spam: promotional, newsletter, marketing, unrelated
+- transaction: ANY email about money movement — credit/debit card charge, UPI payment, bank transfer, merchant debit/credit alert, amount debited/credited. Look for key phrases: "debited", "credited", "spent", "UPI txn", "Rs.", "INR", "amount debited", "transaction alert", "card used", "payment successful".
+- otp: one-time password, verification code, login OTP, 2FA code
+- statement: monthly account/card statement, account summary, passbook update
+- reward: reward points earned, cashback credited, milestone bonus
+- spam: promotional offers, newsletters, marketing campaigns, account feature updates, charge notices, regulatory updates, KYC/CKYC notifications, app password alerts — anything NOT involving an actual money movement
+
+CRITICAL RULES:
+1. If the email mentions a specific rupee amount being debited/credited from an account or card, classify as "transaction" regardless of the sender domain.
+2. Subjects like "You have done a UPI txn", "INR XXXX spent on credit card", "Rs.XXXX debited", "transaction alert" are ALWAYS "transaction".
+3. Indian bank senders (hdfcbank, axisbank, icicibank, sbi, kotakbank, yesbank, indusind) sending amount alerts = "transaction".
+4. "Changes in charges", "Important Update", "CKYC", "KYC" = "spam".
 
 Return: {"email_type": "<type>", "confidence": <0.0-1.0>}`;
 
@@ -89,9 +95,13 @@ export class ClassificationWorker extends WorkerHost {
       emailType: 'transaction',
     };
 
+    // Append runId so reprocess runs never collide with previous completed jobs
+    const runId = job.data.runId;
+    const extractJobId = runId ? `extract-${messageId}-r${runId}` : `extract-${messageId}`;
+
     await this.extractionQueue.add('extract', payload, {
       ...QUEUE_DEFAULT_JOB_OPTIONS,
-      jobId: `extract-${messageId}`,
+      jobId: extractJobId,
     });
 
     this.logger.log(`[${messageId}] → transaction → enqueued extraction`);

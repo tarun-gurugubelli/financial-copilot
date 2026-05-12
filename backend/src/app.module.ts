@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
@@ -11,6 +11,10 @@ import { CryptoModule } from './common/crypto/crypto.module';
 import { RedisModule } from './common/redis/redis.module';
 import { OpenAiModule } from './common/openai/openai.module';
 import { QueuesModule } from './queues/queues.module';
+import { LoggerModule } from './common/logger/logger.module';
+import { MetricsModule } from './common/metrics/metrics.module';
+import { GatewayModule } from './common/gateway/gateway.module';
+import { AuditMiddleware } from './common/middleware/audit.middleware';
 
 // Domain modules
 import { AuthModule } from './modules/auth/auth.module';
@@ -50,12 +54,19 @@ import { User, UserSchema } from './database/schemas/user.schema';
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 30 }]),
 
+    // Observability
+    LoggerModule,
+    MetricsModule,
+
     // Infrastructure
     DatabaseModule,
     CryptoModule,
     RedisModule,
     OpenAiModule,
     QueuesModule,
+
+    // WebSocket gateway (must be before domain modules that emit events)
+    GatewayModule,
 
     // Domain modules (own REST controllers + model registration)
     AuthModule,
@@ -92,4 +103,8 @@ import { User, UserSchema } from './database/schemas/user.schema';
     InsightsWorker,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(AuditMiddleware).forRoutes('*');
+  }
+}

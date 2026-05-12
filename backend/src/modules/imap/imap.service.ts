@@ -76,6 +76,22 @@ function isLikelyBankEmail(from: string, subject: string): boolean {
   );
 }
 
+/** Strip HTML tags to plain text — used when mailparser returns no text part. */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Format a JS Date as DD-Mon-YYYY for IMAP SINCE criterion */
 function formatImapDate(date: Date): string {
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -149,15 +165,20 @@ export class ImapService implements OnApplicationShutdown {
     }
   }
 
-  /** Sync ALL connected accounts for one user */
-  async fetchEmailsForUser(userId: string): Promise<void> {
+  /** Sync ALL connected accounts for one user.
+   *  @param sinceOverride  When provided, overrides the per-account lastSyncAt
+   *                        so emails are fetched from this date regardless of
+   *                        when the last sync ran (used by manual range sync). */
+  async fetchEmailsForUser(userId: string, sinceOverride?: Date): Promise<void> {
     const user = await this.userModel.findById(userId);
     if (!user?.imapAccounts?.length) return;
 
     await this.userModel.findByIdAndUpdate(userId, { syncStatus: 'syncing' });
 
     const results = await Promise.allSettled(
-      user.imapAccounts.map((account) => this.fetchEmailsForAccount(userId, account)),
+      user.imapAccounts.map((account) =>
+        this.fetchEmailsForAccount(userId, account, sinceOverride),
+      ),
     );
 
     const allOk = results.every((r) => r.status === 'fulfilled');
@@ -169,15 +190,20 @@ export class ImapService implements OnApplicationShutdown {
 
   // ── Per-account sync ────────────────────────────────────────────────────────
 
-  private async fetchEmailsForAccount(userId: string, account: ImapAccount): Promise<void> {
+  private async fetchEmailsForAccount(
+    userId: string,
+    account: ImapAccount,
+    sinceOverride?: Date,
+  ): Promise<void> {
     const password = this.crypto.decrypt(account);
     const { host, port } = this.getProviderConfig(account.provider);
 
-    // Use lastSyncAt with 1-day overlap to avoid missing emails at boundary.
-    // For a fresh account (never synced), fetch the last 90 days.
-    const sinceDate = account.lastSyncAt
-      ? new Date(account.lastSyncAt.getTime() - 24 * 60 * 60 * 1000)
-      : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    // sinceOverride wins (manual range sync); otherwise use lastSyncAt with a
+    // 1-day overlap. Fresh accounts default to last 90 days.
+    const sinceDate = sinceOverride
+      ?? (account.lastSyncAt
+        ? new Date(account.lastSyncAt.getTime() - 24 * 60 * 60 * 1000)
+        : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000));
 
     return new Promise((resolve, reject) => {
       const imap = new Imap({
@@ -289,7 +315,12 @@ export class ImapService implements OnApplicationShutdown {
       parsed.messageId ?? `generated-${Date.now()}-${Math.random()}`;
     const from = parsed.from?.text ?? '';
     const subject = parsed.subject ?? '';
-    const bodyText = parsed.text?.slice(0, 10240) ?? '';
+    const bodyHtmlRaw = parsed.html ? parsed.html.slice(0, 51200) : '';
+    // Use the parsed plain-text part; fall back to stripping HTML for HTML-only
+    // emails (e.g. HDFC InstaAlerts that have no text/plain part).
+    const bodyText = (parsed.text?.trim()
+      ? parsed.text.slice(0, 10240)
+      : htmlToText(bodyHtmlRaw).slice(0, 10240));
     const bodyHash = crypto.createHash('sha256').update(bodyText).digest('hex');
 
     // Pre-filter: skip clearly non-bank emails to reduce AI costs
@@ -313,7 +344,7 @@ export class ImapService implements OnApplicationShutdown {
           from,
           receivedAt: parsed.date ?? new Date(),
           bodyText,
-          bodyHtml: parsed.html ? parsed.html.slice(0, 51200) : '',
+          bodyHtml: bodyHtmlRaw,
           bodyHash,
           status: 'pending',
           processed: false,

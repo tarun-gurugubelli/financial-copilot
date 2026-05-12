@@ -37,10 +37,12 @@ export class FraudWorker extends WorkerHost {
       { sort: { createdAt: -1 } },
     );
 
+    const runId = job.data.runId;
+    const notifyJobId = runId ? `notify-${messageId}-r${runId}` : `notify-${messageId}`;
     await this.notificationQueue.add(
       'notify',
       { ...job.data, fraudResult } satisfies JobPayload,
-      { ...QUEUE_DEFAULT_JOB_OPTIONS, jobId: `notify-${messageId}` },
+      { ...QUEUE_DEFAULT_JOB_OPTIONS, jobId: notifyJobId },
     );
 
     this.logger.debug(`[${messageId}] fraud passthrough → notification enqueued`);
