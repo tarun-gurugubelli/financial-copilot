@@ -1,0 +1,41 @@
+@import "tailwindcss";
+@source "./src/app/**/*.ts";
+@source "./src/index.html";
+
+@theme {
+  /* Dark FinTech palette */
+  --color-bg:       #0A0A0F;
+  --color-surface:  #111118;
+  --color-border:   #1E1E2E;
+  --color-primary:  #6366F1;
+  --color-success:  #10B981;
+  --color-warning:  #F59E0B;
+  --color-danger:   #EF4444;
+  --color-text:     #F1F5F9;
+  --color-muted:    #64748B;
+
+  --font-family-sans: 'Inter', system-ui, sans-serif;
+  --font-family-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Base */
+html {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Light theme override */
+html.light {
+  --color-bg:      #FAFAFA;
+  --color-surface: #FFFFFF;
+  --color-border:  #E2E8F0;
+  --color-text:    #0F172A;
+  --color-muted:   #64748B;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
