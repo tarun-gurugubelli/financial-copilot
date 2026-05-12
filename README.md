@@ -1,304 +1,288 @@
-# Financial Copilot — AI Credit Card Intelligence Platform
+# Financial Copilot
 
-An AI-powered financial intelligence platform that monitors Yahoo Mail for credit card transaction emails, extracts transaction details using OpenAI agents, categorizes spending intelligently, and delivers a professional real-time analytics dashboard — all in a single monorepo.
-
----
-
-## Architecture Overview
-
-```
-Yahoo Mail (IMAP — imap.mail.yahoo.com:993 TLS)
-      ↓
-IMAP Sync Service  (NestJS @Cron → dispatches per-user BullMQ jobs)
-      ↓
-BullMQ + Redis  (7-queue pipeline with explicit job chaining)
-      ↓
-LangGraph AI Agent Pipeline  (OpenAI GPT-4o / GPT-4o-mini)
-      ↓
-MongoDB  (all queries scoped by userId)
-      ↓
-NestJS REST + Socket.IO API
-      ↓
-Angular 19 Dashboard  (Tailwind CSS, dark professional theme)
-```
+An AI-powered personal finance platform that connects to your email inbox, automatically extracts credit card transactions using GPT-4o, categorizes your spending, and delivers a real-time analytics dashboard — all self-hosted, all open source infrastructure.
 
 ---
 
-## Monorepo Structure
+## What it does
 
-```
-financial-copilot/
-├── frontend/                    # Angular 19 SPA
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── core/            # singletons: auth, http, error handling
-│   │   │   ├── shared/          # reusable components, pipes, directives
-│   │   │   ├── layout/          # shell, sidebar, navbar
-│   │   │   ├── features/        # lazy-loaded route modules
-│   │   │   │   ├── onboarding/  # IMAP setup wizard (first login)
-│   │   │   │   ├── dashboard/
-│   │   │   │   ├── transactions/
-│   │   │   │   ├── insights/
-│   │   │   │   ├── cards/
-│   │   │   │   ├── analytics/
-│   │   │   │   ├── notifications/
-│   │   │   │   └── settings/
-│   │   │   ├── state/           # NgRx Signal Store slices
-│   │   │   ├── services/        # API + WebSocket clients
-│   │   │   ├── guards/
-│   │   │   ├── interceptors/    # JWT attach, 401 refresh, global error
-│   │   │   └── models/          # TypeScript interfaces
-│   │   └── environments/
-│   ├── tailwind.config.js
-│   └── package.json
-│
-├── backend/                     # NestJS API + AI workers
-│   ├── src/
-│   │   ├── modules/             # domain modules (auth, transactions, cards…)
-│   │   ├── agents/              # LangGraph agent nodes
-│   │   ├── queues/              # BullMQ queue definitions + JobPayload types
-│   │   ├── workers/             # BullMQ processors (one file per queue)
-│   │   ├── common/              # guards, filters, decorators, pipes
-│   │   ├── config/              # env validation (Joi schema)
-│   │   └── database/            # Mongoose schemas + ScopedRepository base
-│   └── package.json
-│
-├── docker-compose.yml           # All local services (see table below)
-├── .env.example                 # All required env vars with placeholders
-├── .gitignore
-├── .github/
-│   └── workflows/
-├── PROGRESS.md                  # Phase-by-phase development tracker
-├── development_plan.md
-├── product_design.md
-└── README.md
-```
+1. **Connects to your email** (Yahoo, Gmail, or Outlook) via IMAP using an App Password — no OAuth, no third-party data sharing
+2. **Reads bank alert emails** and runs them through a 5-stage AI pipeline to extract transaction details (amount, merchant, card, date)
+3. **Categorizes every transaction** automatically (Food, Travel, Shopping, etc.)
+4. **Pushes live updates** to your dashboard via Socket.IO — new transactions appear instantly without a page refresh
+5. **Generates AI insights** nightly — spending summaries, trends, and recommendations written by GPT-4o
 
 ---
 
 ## Tech Stack
 
-| Layer | Technology | License |
-|---|---|---|
-| Frontend | Angular 19+ | MIT |
-| UI Framework | Tailwind CSS | MIT |
-| State Management | NgRx Signal Store | MIT |
-| Charts | Apache ECharts (ngx-echarts) | Apache 2.0 |
-| Backend | NestJS | MIT |
-| Database | MongoDB (self-hosted or Atlas free tier) | SSPL / free tier |
-| Queue | BullMQ + Redis | MIT |
-| AI Workflow | LangGraph.js | MIT |
-| AI Provider | OpenAI API (GPT-4o / GPT-4o-mini) | — |
-| Realtime | Socket.IO | MIT |
-| Email | node-imap + mailparser | MIT |
-| Vector DB (Phase 5) | Pinecone (managed cloud) | — |
-| Deployment | Docker + Docker Compose | Apache 2.0 |
-| CI/CD | GitHub Actions | — |
-| Logging | Winston | MIT |
-| Monitoring | Prometheus + Grafana (self-hosted) | Apache 2.0 |
-| Error Tracking | Sentry (self-hosted or free cloud tier) | — |
-
-> All infrastructure dependencies are open source. The only external paid dependency is the OpenAI API.
-
----
-
-## Product Workflow
-
-```
-1.  @Cron fires          →  one email-fetch job enqueued per user in BullMQ
-2.  IMAP connect         →  imap.mail.yahoo.com:993 TLS (per-user credentials)
-3.  Fetch unseen emails  →  dedup by Message-ID (upsert on email_raw)
-4.  Classification       →  transaction / OTP / statement / reward / spam
-5.  Non-transaction      →  marked in email_raw, pipeline exits — no Extraction
-6.  Extraction           →  GPT-4o structured JSON (amount, merchant, card, etc.)
-7.  Validation           →  schema + confidence ≥ 0.7; else → needs_review path
-8.  Categorization       →  GPT-4o-mini (category + subcategory)
-9.  Fraud check          →  passthrough in Phase 2, real GPT-4o agent in Phase 4
-10. MongoDB persist      →  transaction inserted, card.currentBalance updated via $inc
-11. Socket.IO broadcast  →  transaction.new pushed to user's room
-12. Insights Agent       →  nightly cron, upsert ai_insights for current period
-```
-
----
-
-## AI Agent Pipeline
-
-```
-New Email (BullMQ job with JobPayload)
-    ↓
-[Classification Agent]   — GPT-4o-mini
-    ├── non-transaction → mark email_raw.emailType, set processed=true, EXIT
-    └── transaction ──────────────────────────────────────┐
-                                                          ↓
-                                           [Extraction Agent]   — GPT-4o
-                                               structured JSON output
-                                                          ↓
-                                           [Validation Layer]   — deterministic
-                                               ├── confidence < 0.7
-                                               │     → email_raw.status = 'low_confidence'
-                                               │     → enqueue notification job
-                                               │     → EXIT (no transaction created)
-                                               └── confidence ≥ 0.7
-                                                         ↓
-                                           [Categorization Agent] — GPT-4o-mini
-                                                         ↓
-                                           [Fraud Queue Worker]
-                                               Phase 2: passthrough (fraudScore=0)
-                                               Phase 4: GPT-4o fraud agent
-                                                         ↓
-                                           [MongoDB Persist]
-                                               transaction.insert()
-                                               card.currentBalance $inc
-                                                         ↓
-                                           [Notification Worker]
-                                               Socket.IO → transaction.new
-                                               if fraudScore > 0.7 → fraud_alert
-
-[Insights Agent] — separate cron, GPT-4o
-    Trigger: nightly at 02:00 UTC
-    Guard: upsert on { userId, period } — idempotent
-```
-
----
-
-## Queue Architecture
-
-Seven queues; each queue worker explicitly enqueues the next queue on success.
-All workers share a typed `JobPayload` interface (accumulates state across queues).
-
-```
-email-fetch-queue       (IMAP ingest, one job per user per cron tick)
-      ↓
-classification-queue    (GPT-4o-mini; exits early for non-transactions)
-      ↓
-extraction-queue        (GPT-4o; rate-limited: 10 jobs/min)
-      ↓
-categorization-queue    (GPT-4o-mini)
-      ↓
-fraud-queue             (passthrough Phase 2 → real agent Phase 4)
-      ↓
-notification-queue      (Socket.IO push + in-app notification write)
-      ↓
-insights-queue          (cron-triggered, separate from per-email pipeline)
-```
-
-Each queue has: `attempts: 3`, `backoff: { type: 'exponential', delay: 5000 }`, dead-letter queue on final failure.
-
----
-
-## Database Collections
-
-| Collection | Purpose |
+| Layer | Technology |
 |---|---|
-| `users` | Auth, profile, encrypted IMAP credentials, sync state |
-| `cards` | Card metadata + denormalized `currentBalance` (updated via `$inc`) |
-| `transactions` | Extracted, categorized, fraud-scored transactions |
-| `ai_insights` | Nightly AI summaries; unique index on `{ userId, period }` |
-| `email_raw` | Raw email metadata; unique index on `{ userId, messageId }` |
-| `notifications` | In-app alert log |
-| `audit_log` | Every auth event and data mutation (userId, IP, action, result) |
-| `conversations` | Phase 5 chat sessions |
+| Frontend | Angular 21, Tailwind CSS, NgRx Signal Store |
+| Backend | NestJS 11, TypeScript |
+| Database | MongoDB 7 (Mongoose) |
+| Queue | BullMQ + Redis 7 |
+| AI | OpenAI GPT-4o + GPT-4o-mini |
+| Realtime | Socket.IO |
+| Email | node-imap + mailparser |
+| Logging | Winston (colored dev / JSON prod) |
+| Containers | Docker + Docker Compose |
 
-All repositories extend `ScopedRepository<T>` which enforces `userId` on every query — it is structurally impossible to query without a user scope.
+> The only paid external dependency is the **OpenAI API**. Everything else is open source and self-hosted.
 
 ---
 
-## Local Setup
+## Architecture
 
-### Prerequisites
+```
+Email Inbox (Yahoo / Gmail / Outlook — IMAP TLS)
+        │
+        ▼
+  IMAP Sync Service          @Cron every 5 min, one BullMQ job per user
+        │
+        ▼
+  AI Pipeline (BullMQ + Redis)
 
-- Node.js 20+
-- Docker + Docker Compose
-- Git
+  ┌──────────────────────────────────────────────────────────────┐
+  │  classification  →  extraction  →  categorization            │
+  │  (GPT-4o-mini)      (GPT-4o)       (GPT-4o-mini)            │
+  │       │                                    │                 │
+  │  non-transaction                      fraud check            │
+  │  exits here                          (passthrough)           │
+  │                                           │                  │
+  │                                   notification worker        │
+  └──────────────────────────────────────────────────────────────┘
+        │
+        ▼
+  MongoDB  ←  all queries scoped by userId
+        │
+        ▼
+  NestJS REST API + Socket.IO Gateway
+        │
+        ▼
+  Angular 21 Dashboard  (live updates via WebSocket)
+```
 
-### Quick Start (Docker)
+---
+
+## Project Structure
+
+```
+financial-copilot/
+├── frontend/                        # Angular 21 SPA
+│   ├── src/app/
+│   │   ├── features/
+│   │   │   ├── dashboard/
+│   │   │   ├── transactions/        # date filters, search, pagination
+│   │   │   ├── cards/               # card list with total spent
+│   │   │   ├── insights/            # nightly AI summaries
+│   │   │   ├── analytics/
+│   │   │   ├── notifications/       # full notification timeline
+│   │   │   ├── settings/            # IMAP accounts, reprocess pipeline
+│   │   │   └── onboarding/          # first-login IMAP setup wizard
+│   │   ├── layout/shell/            # sidebar, navbar, toast overlay, reconnect banner
+│   │   ├── services/
+│   │   │   ├── api.service.ts       # all REST calls
+│   │   │   ├── socket.service.ts    # Socket.IO client
+│   │   │   └── toast.service.ts     # in-app toast notifications
+│   │   ├── state/auth.store.ts      # NgRx Signal Store
+│   │   └── models/                  # TypeScript interfaces
+│   └── nginx.conf                   # serves SPA + proxies /api/ and /socket.io/
+│
+├── backend/                         # NestJS API + AI workers
+│   ├── src/
+│   │   ├── modules/                 # auth, users, cards, transactions, imap, notifications, insights
+│   │   ├── workers/                 # one file per BullMQ queue
+│   │   │   ├── classification.worker.ts
+│   │   │   ├── extraction.worker.ts
+│   │   │   ├── categorization.worker.ts
+│   │   │   ├── fraud.worker.ts      # passthrough until Phase 4
+│   │   │   ├── notification.worker.ts
+│   │   │   └── insights.worker.ts
+│   │   ├── common/
+│   │   │   ├── gateway/             # Socket.IO gateway + WsGuard
+│   │   │   ├── middleware/          # audit logging
+│   │   │   ├── logger/              # Winston module
+│   │   │   └── crypto/              # AES-256-GCM for IMAP credentials
+│   │   ├── database/schemas/        # all Mongoose schemas
+│   │   ├── queues/                  # BullMQ queue definitions + JobPayload interface
+│   │   └── config/env.validation.ts # Joi schema — app refuses to start if vars missing
+│   └── Dockerfile
+│
+├── docker-compose.yml               # mongo, redis, backend, frontend
+├── .env.example
+└── PROGRESS.md                      # phase-by-phase development tracker
+```
+
+---
+
+## Running Locally
+
+### Option A — Docker Compose (recommended)
+
+Everything runs in containers. No local Node.js required beyond Docker.
 
 ```bash
-git clone https://github.com/<your-org>/financial-copilot.git
+git clone https://github.com/<you>/financial-copilot.git
 cd financial-copilot
-cp .env.example .env        # fill in secrets (see table below)
-docker-compose up --build
+
+# 1. Copy and fill in secrets
+cp .env.example .env
+
+# 2. Build and start all services
+docker compose up --build
 ```
 
-| Service | URL | Notes |
-|---|---|---|
-| Angular Frontend | http://localhost:4200 | |
-| NestJS Backend | http://localhost:3000 | |
-| MongoDB | localhost:27017 | data persisted in named volume |
-| Redis | localhost:6379 | data persisted in named volume |
-| Prometheus | http://localhost:9090 | scrapes /metrics |
-| Grafana | http://localhost:3001 | pre-configured dashboards |
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:4200 |
+| Backend API | http://localhost:3000/api |
+| MongoDB | localhost:27017 |
+| Redis | localhost:6379 |
 
-Docker Compose services: `frontend`, `backend`, `mongo`, `redis`, `prometheus`, `grafana`.
-Phase 5 uses Pinecone (managed cloud) — no additional Docker service needed.
+```bash
+# Stop containers
+docker compose down
 
-### Manual Setup
+# Stop and wipe all data (volumes)
+docker compose down -v
 
-**Backend**
+# Rebuild after code changes
+docker compose up --build backend frontend
+```
 
+---
+
+### Option B — Manual (hot reload for development)
+
+**Prerequisites:** Node.js 20+, MongoDB 7 running locally, Redis 7 running locally.
+
+**1. Start infrastructure only**
+```bash
+docker compose up mongo redis -d
+```
+
+**2. Backend** (hot reload)
 ```bash
 cd backend
 npm install
-cp ../.env.example .env
+cp ../.env.example .env   # edit with your values
 npm run start:dev
 ```
 
-**Frontend**
-
+**3. Frontend** (live reload)
 ```bash
 cd frontend
 npm install
-npm run start
+npm run start             # http://localhost:4200
 ```
 
-### Environment Variables
+---
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and fill in:
 
 ```env
-# Runtime
+# ── Server ────────────────────────────────────────────────────────────────
 NODE_ENV=development
-
-# Server
 PORT=3000
-FRONTEND_URL=http://localhost:4200    # used for CORS whitelist
+FRONTEND_URL=http://localhost:4200      # CORS origin — never use * in production
 
-# Database
+# ── Database ──────────────────────────────────────────────────────────────
 MONGO_URI=mongodb://localhost:27017/financial-copilot
 
-# Redis
+# ── Redis ─────────────────────────────────────────────────────────────────
 REDIS_HOST=localhost
 REDIS_PORT=6379
 
-# Auth
-JWT_SECRET=
-JWT_REFRESH_SECRET=
+# ── Auth ──────────────────────────────────────────────────────────────────
+JWT_SECRET=                             # min 32 chars, random string
+JWT_REFRESH_SECRET=                     # different from JWT_SECRET, min 32 chars
 JWT_EXPIRY=15m
 JWT_REFRESH_EXPIRY=7d
-
-# Passwords
 BCRYPT_SALT_ROUNDS=12
 
-# Encryption (IMAP credentials at rest)
-AES_SECRET_KEY=                       # 32-byte hex string (256-bit)
+# ── Encryption ────────────────────────────────────────────────────────────
+# AES-256-GCM key for IMAP credentials stored at rest
+# Generate: openssl rand -hex 32
+AES_SECRET_KEY=                         # exactly 64 hex characters (32 bytes)
 
-# OpenAI
-OPENAI_API_KEY=
-OPENAI_MAX_TOKENS_EXTRACTION=1000
-OPENAI_MAX_TOKENS_INSIGHTS=2000
-OPENAI_TEMPERATURE=0.2
+# ── OpenAI ────────────────────────────────────────────────────────────────
+OPENAI_API_KEY=sk-...
 
-# BullMQ
-BULLMQ_CONCURRENCY=2                  # workers per queue
-IMAP_FETCH_INTERVAL=*/5 * * * *       # cron expression
-
-# Monitoring / Error tracking
-SENTRY_DSN=                           # optional
-
-# Phase 5 only
-PINECONE_API_KEY=                     # Phase 5 only
-PINECONE_INDEX=financial-copilot      # Phase 5 only
+# ── Queue ─────────────────────────────────────────────────────────────────
+BULLMQ_CONCURRENCY=2                    # parallel workers per queue
+IMAP_FETCH_INTERVAL=*/5 * * * *         # cron expression for IMAP polling
 ```
 
-> `YAHOO_EMAIL` and `YAHOO_APP_PASSWORD` are **not** global env vars — they are per-user data stored encrypted in MongoDB and entered via the onboarding wizard.
+### Generating secrets
+
+```bash
+# JWT secrets (use different values for each)
+openssl rand -base64 48
+
+# AES key — must be exactly 64 hex characters
+openssl rand -hex 32
+```
+
+> **Note:** Your email address and App Password are **not** env vars. Each user enters their own credentials through the in-app onboarding wizard. They are stored AES-256-GCM encrypted in MongoDB, per user — never in plaintext, never shared.
+
+---
+
+## First-Time Setup
+
+1. Open http://localhost:4200 and **Register** an account
+2. The **Onboarding Wizard** walks you through connecting an email:
+
+   | Provider | Where to get an App Password |
+   |---|---|
+   | Yahoo | security.yahoo.com → Generate app password |
+   | Gmail | myaccount.google.com/apppasswords (requires 2FA) |
+   | Outlook | account.microsoft.com/security → Advanced security |
+
+3. The app tests the IMAP connection before saving anything
+4. Initial sync starts immediately — fetches the last 90 days of bank emails
+5. Transactions appear on the dashboard as each email is processed (a few seconds per email)
+
+> The app uses App Passwords and IMAP read-only access. It never sends, deletes, or modifies emails.
+
+---
+
+## AI Pipeline
+
+| Stage | Model | What happens |
+|---|---|---|
+| **Classification** | GPT-4o-mini | Labels the email: `transaction` / `otp` / `statement` / `reward` / `spam`. Non-transactions exit here. |
+| **Extraction** | GPT-4o | Extracts: amount, merchant, card last 4 digits, date, transaction type. Returns a confidence score. |
+| **Validation** | Deterministic | Rejects if confidence < 0.7 or amount ≤ 0. Rejected emails surface as a warning notification. |
+| **Categorization** | GPT-4o-mini | Assigns a category (Food, Travel, Shopping…) and subcategory. |
+| **Notification** | — | Persists to MongoDB + emits `transaction.new` via Socket.IO to the user's browser in real time. |
+
+A separate **Insights Agent** (GPT-4o) runs nightly at 02:00 UTC and generates a spending summary for the current month. It uses upsert so it is always safe to re-run.
+
+---
+
+## Supported Banks
+
+The pre-filter recognizes emails from Indian banks including:
+
+HDFC Bank · Axis Bank · ICICI Bank · IDFC First Bank · Yes Bank · Kotak Mahindra · SBI · IndusInd Bank · Punjab National Bank · Bank of Baroda · Federal Bank · RBL Bank
+
+Any bank sending standard Indian transaction alert emails (amount debited, card used, UPI transaction) will also be detected.
+
+---
+
+## Realtime Features
+
+After login the frontend opens a Socket.IO connection authenticated via the existing HttpOnly JWT cookie — no extra token handling.
+
+| Event | When it fires | UI effect |
+|---|---|---|
+| `transaction.new` | New transaction extracted | Green toast in top-right corner |
+| `notification.new` | Any new notification | Bell icon badge increments |
+| `extraction.failed` | AI confidence too low | Warning toast |
+| `disconnect` | Connection lost | Yellow "Reconnecting…" banner in header |
 
 ---
 
@@ -306,87 +290,81 @@ PINECONE_INDEX=financial-copilot      # Phase 5 only
 
 | Concern | Implementation |
 |---|---|
-| User passwords | bcrypt (cost factor 12) — `passwordHash` stored, raw password never persisted |
-| IMAP credentials | AES-256-GCM encrypted at rest from day 1 (Phase 1 prerequisite) |
-| Refresh tokens | SHA-256 hash stored in Redis with 7-day TTL; deleted on rotation and logout |
-| JWT access tokens | 15-minute expiry; HttpOnly + Secure + SameSite=Strict cookie |
-| Socket.IO auth | JWT passed in `handshake.auth.token`; `WsGuard` validates and joins user room |
-| HTTP security | Helmet headers, CORS from `FRONTEND_URL` env var, HTTPS-only in prod |
-| Rate limiting | Throttler per IP (unauthenticated) + per userId (authenticated) |
-| Input validation | `class-validator` DTOs on all endpoints |
-| AI prompt safety | Prompt injection filter layer before every OpenAI call |
-| Data isolation | `ScopedRepository<T>` enforces `userId` filter on every DB query |
-| Audit logging | `audit_log` collection: every auth event + data mutation with userId + IP |
+| Passwords | bcrypt cost 12, `passwordHash` field only, never returned in API responses |
+| IMAP credentials | AES-256-GCM encrypted at rest; per-user IV and auth tag stored alongside ciphertext |
+| JWT access token | 15-min expiry, HttpOnly + Secure + SameSite=Strict cookie |
+| Refresh token | SHA-256 hash stored in Redis Set with 7-day TTL; atomically rotated and revoked on every use |
+| Socket.IO auth | JWT validated from HttpOnly cookie on connection; each user in their own room |
+| Rate limiting | Per-IP on public routes, per-userId on authenticated routes |
+| Input validation | `class-validator` DTOs on every endpoint; unknown fields stripped |
+| AI prompt safety | Injection filter strips control patterns from all email content before any OpenAI call |
+| Data isolation | `ScopedRepository<T>` makes it structurally impossible to run a query without a `userId` |
+| Audit log | Every auth event and data mutation written to `audit_log` with userId, IP, action, result |
+
+---
+
+## Re-processing Emails
+
+If transactions look wrong (wrong merchant, missed cards), go to **Settings → Reset & Re-process**. This:
+
+1. Deletes all extracted transactions and cards for your account
+2. Resets every stored email to unprocessed
+3. Re-queues all emails through the full AI pipeline
+
+A progress bar shows real-time pipeline status. The page remembers state across refreshes via localStorage in case you navigate away.
+
+---
+
+## Deployment on AWS
+
+The entire stack runs on a single **EC2 t3.small** (2 vCPU, 2 GB RAM) using the existing `docker-compose.yml`.
+
+```bash
+# Amazon Linux 2023
+sudo dnf install -y docker git
+sudo systemctl start docker
+sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64" \
+  -o /usr/local/bin/docker-compose && sudo chmod +x /usr/local/bin/docker-compose
+
+git clone https://github.com/<you>/financial-copilot.git
+cd financial-copilot
+cp .env.example .env
+# Set FRONTEND_URL=https://yourdomain.com
+
+docker compose up -d
+```
+
+For HTTPS, put **Caddy** in front (auto-provisions Let's Encrypt):
+
+```
+# /etc/caddy/Caddyfile
+yourdomain.com {
+    reverse_proxy localhost:4200
+}
+```
+
+**Cost estimate:** ~$17/month (t3.small + 30 GB EBS). Swap the MongoDB container for **MongoDB Atlas M0 free tier** to save ~300 MB RAM and keep the same price.
 
 ---
 
 ## Development Phases
 
-See [PROGRESS.md](./PROGRESS.md) for live checkbox tracking.
-
-| Phase | Scope | Status |
+| Phase | Name | Status |
 |---|---|---|
-| 1 — MVP | Auth, encryption utility, IMAP sync, dedup, regex extraction scaffold, basic dashboard | Not started |
-| 2 — AI Integration | LangGraph 7-queue pipeline, GPT agents, non-transaction routing, DLQ | Not started |
-| 3 — Realtime + Security | Socket.IO with auth, Redis refresh revocation, audit log, monitoring | Not started |
-| 4 — Advanced Intelligence | Real fraud agent, forecasting, subscription tracking | Not started |
-| 5 — Conversational AI | RAG, Pinecone, tool-calling agent, SSE streaming | Not started |
+| 1 | MVP — Foundation | ✅ Complete |
+| 2 | AI Integration | ✅ Complete |
+| 3 | Realtime + Security Hardening | ✅ Complete |
+| 4 | Advanced Intelligence | 🔲 Planned |
+| 5 | Conversational AI | 🔲 Planned |
 
----
+**Phase 4** — Real fraud detection with GPT-4o reasoning, subscription tracker, 30-day spending forecasts, credit utilization gauges, full analytics page.
 
-## Risks and Mitigations
+**Phase 5** — Chat interface powered by RAG. Ask "What did I spend on food last month?" and get an answer grounded in your actual transaction data.
 
-| Risk | Mitigation |
-|---|---|
-| IMAP credentials stored before encryption ready | AES-256-GCM utility is a Phase 1 prerequisite — no credential write without it |
-| Duplicate transactions from re-synced emails | Unique index on `{ userId, messageId }` in `email_raw`; BullMQ job ID = messageId |
-| node-imap connection drops silently | Error/end event handlers with exponential backoff; sync status exposed via Redis |
-| Same email processed twice on worker retry | `findOneAndUpdate + upsert` on `email_raw.messageId` — write is idempotent |
-| Non-transaction emails entering Extraction Agent | Classification graph exits early for non-transactions before Extraction queue |
-| Low-confidence extractions silently lost | `needs_review` path: email_raw flagged, user notified, never silently dropped |
-| OpenAI 429 rate limits on large backlogs | BullMQ rate limiter (10 jobs/min on extraction queue) + exponential backoff retry |
-| Stolen refresh token reuse | Token hash stored in Redis; rotation deletes old hash atomically |
-| Cross-user data leakage | `ScopedRepository<T>` makes userId-less queries structurally impossible |
-| In-flight jobs lost on container restart | `OnApplicationShutdown` drains workers before NestJS exits; Docker `stop_grace_period: 30s` |
-| Duplicate AI insights on cron double-fire | Unique index on `{ userId, period }` + upsert in Insights Agent |
-| CORS misconfiguration in production | CORS origin = `FRONTEND_URL` env var; never hardcoded |
-| Flash of wrong theme on page load | Inline `<script>` in index.html reads localStorage before Angular bootstraps |
-
----
-
-## Monitoring (Self-Hosted)
-
-- **Prometheus** — scrapes `/metrics` from NestJS; tracks queue depth, extraction success rate, AI token usage per model, agent latency
-- **Grafana** — pre-configured dashboards for queue health, API latency, OpenAI cost
-- **Winston** — structured JSON logs (stdout in Docker, aggregated by Compose log driver)
-- **Sentry** — error tracking (self-hosted or free cloud tier via `SENTRY_DSN`)
-
----
-
-## Deployment
-
-| Component | Recommendation |
-|---|---|
-| Frontend | GitHub Pages |
-| Backend | Render |
-| MongoDB | MongoDB Atlas (free M0) or self-hosted |
-| Redis | Upstash (free tier) or self-hosted |
-| Pinecone (Phase 5) | Pinecone free tier (serverless index) |
-
----
-
-## Branching Strategy
-
-```
-main          ← stable production
-develop       ← integration branch
-feature/*     ← new features
-hotfix/*      ← urgent production fixes
-release/*     ← pre-release staging
-```
+See [PROGRESS.md](./PROGRESS.md) for detailed task-level tracking.
 
 ---
 
 ## License
 
-Internal Portfolio / Educational Use
+MIT

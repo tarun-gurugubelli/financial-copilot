@@ -12,7 +12,6 @@ import { RedisModule } from './common/redis/redis.module';
 import { OpenAiModule } from './common/openai/openai.module';
 import { QueuesModule } from './queues/queues.module';
 import { LoggerModule } from './common/logger/logger.module';
-import { MetricsModule } from './common/metrics/metrics.module';
 import { GatewayModule } from './common/gateway/gateway.module';
 import { AuditMiddleware } from './common/middleware/audit.middleware';
 
@@ -56,7 +55,6 @@ import { User, UserSchema } from './database/schemas/user.schema';
 
     // Observability
     LoggerModule,
-    MetricsModule,
 
     // Infrastructure
     DatabaseModule,
@@ -65,10 +63,10 @@ import { User, UserSchema } from './database/schemas/user.schema';
     OpenAiModule,
     QueuesModule,
 
-    // WebSocket gateway (must be before domain modules that emit events)
+    // WebSocket gateway
     GatewayModule,
 
-    // Domain modules (own REST controllers + model registration)
+    // Domain modules
     AuthModule,
     UsersModule,
     CardsModule,
@@ -77,7 +75,7 @@ import { User, UserSchema } from './database/schemas/user.schema';
     NotificationsModule,
     InsightsModule,
 
-    // Models required by pipeline workers (registered here because workers live in AppModule)
+    // Models required by pipeline workers
     MongooseModule.forFeature([
       { name: Transaction.name, schema: TransactionSchema },
       { name: EmailRaw.name, schema: EmailRawSchema },
