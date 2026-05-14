@@ -17,4 +17,5 @@ export const envValidationSchema = Joi.object({
   OPENAI_API_KEY: Joi.string().optional(),
   BULLMQ_CONCURRENCY: Joi.number().default(2),
   IMAP_FETCH_INTERVAL: Joi.string().default('*/5 * * * *'),
+  RENDER_EXTERNAL_URL: Joi.string().uri().optional(),
 });
